@@ -51,7 +51,7 @@ export class KiliniksBackendStack extends cdk.Stack {
 
     // API Gateway
     const api = new apigateway.RestApi(this, 'KiliniksApi', {
-        restApiName: 'Kiliniks Api',
+        restApiName: `Kiliniks Api-${props.clinicName}-${props.stage}`,
         deployOptions: {
             stageName: props.stage,
         },
