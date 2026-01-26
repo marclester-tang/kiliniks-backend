@@ -1,20 +1,46 @@
 #!/usr/bin/env node
-import * as cdk from 'aws-cdk-lib/core';
+import 'source-map-support/register';
+import * as cdk from 'aws-cdk-lib';
 import { KiliniksBackendStack } from '../lib/kiliniks-backend-stack';
 
 const app = new cdk.App();
-new KiliniksBackendStack(app, 'KiliniksBackendStack', {
-  /* If you don't specify 'env', this stack will be environment-agnostic.
-   * Account/Region-dependent features and context lookups will not work,
-   * but a single synthesized template can be deployed anywhere. */
 
-  /* Uncomment the next line to specialize this stack for the AWS Account
-   * and Region that are implied by the current CLI configuration. */
-  // env: { account: process.env.CDK_DEFAULT_ACCOUNT, region: process.env.CDK_DEFAULT_REGION },
+// Use the environment implied by the CLI configuration
+const env = { 
+  account: process.env.CDK_DEFAULT_ACCOUNT, 
+  region: process.env.CDK_DEFAULT_REGION 
+};
 
-  /* Uncomment the next line if you know exactly what Account and Region you
-   * want to deploy the stack to. */
-  // env: { account: '123456789012', region: 'us-east-1' },
+const clinicCtx = app.node.tryGetContext('clinic');
 
-  /* For more information, see https://docs.aws.amazon.com/cdk/latest/guide/environments.html */
-});
+if (clinicCtx) {
+    // Clinic Specific Stacks
+    const clinicName = clinicCtx as string;
+    // Sanitize clinic name for stack name (remove special chars if needed)
+    const sanitizedClinic = clinicName.replace(/[^a-zA-Z0-9]/g, '');
+
+    new KiliniksBackendStack(app, `KiliniksBackendStack-${sanitizedClinic}-Staging`, {
+        stage: 'staging',
+        clinicName: sanitizedClinic,
+        env,
+    });
+
+    new KiliniksBackendStack(app, `KiliniksBackendStack-${sanitizedClinic}-Prod`, {
+        stage: 'prod',
+        clinicName: sanitizedClinic,
+        env,
+    });
+} else {
+    // Default Stacks (Legacy/Shared)
+    new KiliniksBackendStack(app, 'KiliniksBackendStack-Staging', {
+        stage: 'staging',
+        clinicName: 'default',
+        env,
+    });
+
+    new KiliniksBackendStack(app, 'KiliniksBackendStack-Prod', {
+        stage: 'prod',
+        clinicName: 'default',
+        env,
+    });
+}
