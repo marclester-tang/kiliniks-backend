@@ -10,6 +10,7 @@ import { PostgresStageRepository } from '../secondary/postgres-stage-repo';
 import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger';
 import * as dotenv from 'dotenv';
+import { authMiddleware } from './auth-middleware';
 
 dotenv.config();
 
@@ -30,6 +31,9 @@ const startServer = async () => {
     const flowService = new FlowService(flowRepo, locationRepo, stageRepo);
 
     app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+    // Apply Auth Middleware
+    app.use(authMiddleware);
 
     /**
      * @swagger
@@ -155,6 +159,13 @@ const startServer = async () => {
      *         createdAt:
      *           type: string
      *           format: date-time
+     *      securitySchemes:
+     *        BearerAuth:
+     *          type: http
+     *          scheme: bearer
+     *          bearerFormat: JWT
+     * security:
+     *   - BearerAuth: []
      */
 
     /**
@@ -182,7 +193,7 @@ const startServer = async () => {
     app.post('/appointments', async (req, res) => {
         try {
             const body = req.body;
-            const createdBy = 'local-user';
+            const createdBy = req.user?.sub || 'unknown';
             const result = await service.createAppointment({ ...body, createdBy });
             res.status(201).json(result);
         } catch (err: any) {
@@ -344,7 +355,7 @@ const startServer = async () => {
     app.post('/flows', async (req, res) => {
         try {
             const body = req.body;
-            const createdBy = 'local-user';
+            const createdBy = req.user?.sub || 'unknown';
             const result = await flowService.createFlow({ ...body, createdBy, updatedBy: createdBy });
             res.status(201).json(result);
         } catch (err: any) {
@@ -462,7 +473,7 @@ const startServer = async () => {
      */
     app.put('/flows/:id', async (req, res) => {
         try {
-            const createdBy = 'local-user';
+            const createdBy = req.user?.sub || 'unknown';
             const result = await flowService.updateFlow(req.params.id, { ...req.body, updatedBy: createdBy });
             res.status(200).json(result);
         } catch (err: any) {
@@ -560,7 +571,7 @@ const startServer = async () => {
     app.post('/locations', async (req, res) => {
         try {
             const body = req.body;
-            const createdBy = 'local-user';
+            const createdBy = req.user?.sub || 'unknown';
             const result = await flowService.createLocation({ ...body, createdBy, updatedBy: createdBy });
             res.status(201).json(result);
         } catch (err: any) {
@@ -678,7 +689,7 @@ const startServer = async () => {
      */
     app.put('/locations/:id', async (req, res) => {
         try {
-            const createdBy = 'local-user';
+            const createdBy = req.user?.sub || 'unknown';
             const result = await flowService.updateLocation(req.params.id, { ...req.body, updatedBy: createdBy });
             res.status(200).json(result);
         } catch (err: any) {
@@ -741,7 +752,7 @@ const startServer = async () => {
     app.post('/stages', async (req, res) => {
         try {
             const body = req.body;
-            const createdBy = 'local-user';
+            const createdBy = req.user?.sub || 'unknown';
             const result = await flowService.createStage({ ...body, createdBy, updatedBy: createdBy });
             res.status(201).json(result);
         } catch (err: any) {
@@ -813,7 +824,7 @@ const startServer = async () => {
      */
     app.put('/stages/:id', async (req, res) => {
         try {
-            const createdBy = 'local-user';
+            const createdBy = req.user?.sub || 'unknown';
             const result = await flowService.updateStage(req.params.id, { ...req.body, updatedBy: createdBy });
             res.status(200).json(result);
         } catch (err: any) {
@@ -848,7 +859,7 @@ const startServer = async () => {
              res.status(500).json({ error: err.message });
         }
     });
-    
+
     app.listen(port, () => {
         console.log(`Local server running at http://localhost:${port}`);
         console.log(`API Documentation at http://localhost:${port}/api-docs`);

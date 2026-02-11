@@ -13,6 +13,37 @@ The `cdk.json` file tells the CDK Toolkit how to execute your app.
 * `npx cdk diff`    compare deployed stack with current state
 * `npx cdk synth`   emits the synthesized CloudFormation template
 
+## Local Development
+
+### Prerequisites
+1.  **Docker**: Ensure Docker Desktop is running.
+2.  **AWS CLI**: Configured with profile `kiliniks` (`aws configure --profile kiliniks`).
+3.  **Node.js**: LTS version.
+
+### Setup
+Run the setup script to start the local database, run migrations, and configure `.env` with Cognito details:
+```bash
+npm run setup:local
+```
+This script will:
+1.  Start Postgres via Docker Compose.
+2.  Push Drizzle schema changes to the local DB.
+3.  Fetch `UserPoolId` and `ClientId` from the deployed CloudFormation stack (`KiliniksBackendStack-Staging`) and save them to `.env`.
+
+### Running the Server
+Start the local Express server:
+```bash
+npm run start:local
+```
+The server will start at `http://localhost:3000`.
+-   **Swagger UI**: `http://localhost:3000/api-docs`
+-   **API Endpoint**: `http://localhost:3000/appointments` (and others)
+
+### Database Management
+-   `npm run db:up`: Start the database container.
+-   `npm run db:down`: Stop and remove the database container.
+-   `npm run db:push`: Push schema changes to the database.
+
 # Implementation Plan - Kiliniks Backend
 
 ## Goal Description

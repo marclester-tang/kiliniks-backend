@@ -1,87 +1,83 @@
 import { Pool } from 'pg';
 import { Location, LocationRepository, PaginatedResult, PaginationParams } from '../../core/types';
+import { getDb } from './database';
+import { locations } from './schema';
+import { eq, sql } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
+import { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import * as schema from './schema';
 
 export class PostgresLocationRepository implements LocationRepository {
-    constructor(private pool: Pool) {}
+    private db: NodePgDatabase<typeof schema>;
 
-    private mapRowToLocation(row: any): Location {
+    constructor(pool?: Pool) {
+        this.db = getDb(pool);
+    }
+
+    private mapDrizzleToLocation(row: typeof locations.$inferSelect): Location {
         return {
             id: row.id,
             name: row.name,
-            description: row.description,
-            createdBy: row.created_by,
-            updatedBy: row.updated_by,
-            createdAt: new Date(row.created_at).toISOString(),
+            description: row.description ?? undefined,
+            createdBy: row.createdBy,
+            updatedBy: row.updatedBy ?? undefined,
+            createdAt: row.createdAt.toISOString(),
         };
     }
 
     async create(data: Omit<Location, 'id' | 'createdAt'>): Promise<Location> {
         const id = uuidv4();
-        const query = `
-            INSERT INTO locations (id, name, description, created_by, updated_by)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING *
-        `;
-        const values = [id, data.name, data.description, data.createdBy, data.updatedBy];
-        const res = await this.pool.query(query, values);
-        return this.mapRowToLocation(res.rows[0]);
+        const [inserted] = await this.db.insert(locations).values({
+            id,
+            name: data.name,
+            description: data.description,
+            createdBy: data.createdBy,
+            updatedBy: data.updatedBy,
+        }).returning();
+        
+        return this.mapDrizzleToLocation(inserted);
     }
 
     async update(id: string, data: Partial<Location>): Promise<Location | null> {
-        const updates: string[] = [];
-        const values: any[] = [id];
-        let idx = 2;
+        const updateData: any = {};
+        if (data.name !== undefined) updateData.name = data.name;
+        if (data.description !== undefined) updateData.description = data.description;
+        if (data.updatedBy !== undefined) updateData.updatedBy = data.updatedBy;
 
-        if (data.name !== undefined) {
-            updates.push(`name = $${idx++}`);
-            values.push(data.name);
-        }
-        if (data.description !== undefined) {
-            updates.push(`description = $${idx++}`);
-            values.push(data.description);
-        }
-        if (data.updatedBy !== undefined) {
-            updates.push(`updated_by = $${idx++}`);
-            values.push(data.updatedBy);
-        }
+        updateData.updatedAt = new Date();
 
-        updates.push(`updated_at = NOW()`);
-
-        const query = `UPDATE locations SET ${updates.join(', ')} WHERE id = $1 RETURNING *`;
-        const res = await this.pool.query(query, values);
+        const [updated] = await this.db.update(locations)
+            .set(updateData)
+            .where(eq(locations.id, id))
+            .returning();
         
-        if (res.rows.length === 0) return null;
-        return this.mapRowToLocation(res.rows[0]);
+        if (!updated) return null;
+        return this.mapDrizzleToLocation(updated);
     }
 
     async findById(id: string): Promise<Location | null> {
-        const query = 'SELECT * FROM locations WHERE id = $1';
-        const res = await this.pool.query(query, [id]);
-        if (res.rows.length === 0) return null;
-        return this.mapRowToLocation(res.rows[0]);
+        const [result] = await this.db.select().from(locations).where(eq(locations.id, id));
+        if (!result) return null;
+        return this.mapDrizzleToLocation(result);
     }
 
     async findAll(params?: PaginationParams): Promise<PaginatedResult<Location>> {
         const limit = params?.limit || 10;
         const offset = params?.offset || 0;
 
-        const countQuery = 'SELECT COUNT(*) FROM locations';
-        const countRes = await this.pool.query(countQuery);
-        const total = parseInt(countRes.rows[0].count, 10);
+        const [{ count }] = await this.db.select({ count: sql<number>`count(*)` }).from(locations);
+        const total = Number(count);
 
-        const query = 'SELECT * FROM locations LIMIT $1 OFFSET $2';
-        const res = await this.pool.query(query, [limit, offset]);
+        const results = await this.db.select().from(locations).limit(limit).offset(offset);
         
         return {
-            data: res.rows.map(row => this.mapRowToLocation(row)),
+            data: results.map(this.mapDrizzleToLocation),
             total
         };
     }
 
     async delete(id: string): Promise<boolean> {
-        const query = 'DELETE FROM locations WHERE id = $1';
-        const res = await this.pool.query(query, [id]);
-        return (res.rowCount || 0) > 0;
+        const result = await this.db.delete(locations).where(eq(locations.id, id)).returning();
+        return result.length > 0;
     }
 }

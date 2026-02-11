@@ -1,216 +1,189 @@
-import { Pool, PoolClient } from 'pg';
 import { Stage, StageRepository, SalesItem } from '../../core/types';
+import { getDb } from './database';
+import { stages, salesItems, stageLocations } from './schema';
+import { eq, and } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
+import { Pool } from 'pg';
+import { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import * as schema from './schema';
 
 export class PostgresStageRepository implements StageRepository {
-    constructor(private pool: Pool) {}
+    private db: NodePgDatabase<typeof schema>;
 
-    private mapRowToStage(row: any, salesItems: SalesItem[] = [], locationIds: string[] = []): Stage {
+    constructor(pool?: Pool) {
+        this.db = getDb(pool);
+    } // End of constructor
+
+    private mapDrizzleStageToStage(row: typeof stages.$inferSelect, items: SalesItem[] = [], locIds: string[] = []): Stage {
         return {
             id: row.id,
-            flowId: row.flow_id,
+            flowId: row.flowId,
             name: row.name,
-            hasNotes: row.has_notes,
-            soundUrl: row.sound_url,
-            salesItems: salesItems,
-            locationIds: locationIds,
-            createdBy: row.created_by,
-            updatedBy: row.updated_by,
-            createdAt: new Date(row.created_at).toISOString(),
+            hasNotes: row.hasNotes ?? false,
+            soundUrl: row.soundUrl ?? undefined,
+            salesItems: items,
+            locationIds: locIds,
+            createdBy: row.createdBy ?? 'unknown',
+            updatedBy: row.updatedBy ?? undefined,
+            createdAt: row.createdAt.toISOString(),
         };
     }
 
-    private mapRowToSalesItem(row: any): SalesItem {
+    private mapDrizzleItemToSalesItem(row: typeof salesItems.$inferSelect): SalesItem {
         return {
             id: row.id,
-            stageId: row.stage_id,
+            stageId: row.stageId ?? '', // Handle potential null stageId if necessary, though it should be linked
             name: row.name,
-            itemType: row.item_type,
+            itemType: row.itemType ?? undefined,
             price: parseFloat(row.price),
-            costPrice: row.cost_price ? parseFloat(row.cost_price) : undefined,
-            defaultQuantity: row.default_quantity,
-            defaultPanelCategory: row.default_panel_category,
-            panelCategories: row.panel_categories,
+            costPrice: row.costPrice ? parseFloat(row.costPrice) : undefined,
+            defaultQuantity: row.defaultQuantity,
+            defaultPanelCategory: row.defaultPanelCategory ?? undefined,
+            panelCategories: row.panelCategories as any,
         };
     }
 
     async create(data: Omit<Stage, 'id' | 'createdAt' | 'salesItems' | 'locationIds'> & { salesItems?: Omit<SalesItem, 'id' | 'stageId'>[], locationIds?: string[] }): Promise<Stage> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            const id = uuidv4();
+        return await this.db.transaction(async (tx) => {
+            const newId = uuidv4();
             
-            // Insert Stage
-            const query = `
-                INSERT INTO stages (id, flow_id, name, has_notes, sound_url, created_by, updated_by)
-                VALUES ($1, $2, $3, $4, $5, $6, $7)
-                RETURNING *
-            `;
-            const values = [id, data.flowId, data.name, data.hasNotes, data.soundUrl, data.createdBy, data.updatedBy];
-            const res = await client.query(query, values);
-            const stageRow = res.rows[0];
+            const [insertedStage] = await tx.insert(stages).values({
+                id: newId,
+                flowId: data.flowId,
+                name: data.name,
+                hasNotes: data.hasNotes,
+                soundUrl: data.soundUrl,
+                createdBy: data.createdBy,
+                updatedBy: data.updatedBy,
+            }).returning();
 
-            // Insert Sales Items
-            const salesItems: SalesItem[] = [];
+            const createdSalesItems: SalesItem[] = [];
             if (data.salesItems && data.salesItems.length > 0) {
-                for (const item of data.salesItems) {
-                    const itemId = uuidv4();
-                    const itemQuery = `
-                        INSERT INTO sales_items (id, stage_id, name, item_type, price, cost_price, default_quantity, default_panel_category, panel_categories)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                        RETURNING *
-                    `;
-                    const itemValues = [
-                        itemId, id, item.name, item.itemType, item.price, item.costPrice, 
-                        item.defaultQuantity, item.defaultPanelCategory, JSON.stringify(item.panelCategories)
-                    ];
-                    const itemRes = await client.query(itemQuery, itemValues);
-                    salesItems.push(this.mapRowToSalesItem(itemRes.rows[0]));
-                }
+                 const itemsToInsert = data.salesItems.map(item => ({
+                    id: uuidv4(),
+                    stageId: newId,
+                    name: item.name,
+                    itemType: item.itemType, // Now compatible if schema is nullable
+                    price: item.price.toString(),
+                    costPrice: item.costPrice?.toString(),
+                    defaultQuantity: item.defaultQuantity,
+                    defaultPanelCategory: item.defaultPanelCategory,
+                    panelCategories: item.panelCategories,
+                 }));
+
+                 const insertedItems = await tx.insert(salesItems).values(itemsToInsert).returning();
+                 createdSalesItems.push(...insertedItems.map(this.mapDrizzleItemToSalesItem));
             }
 
-            // Insert Location Links
             if (data.locationIds && data.locationIds.length > 0) {
-                for (const locId of data.locationIds) {
-                    const locQuery = `INSERT INTO stage_locations (stage_id, location_id) VALUES ($1, $2)`;
-                    await client.query(locQuery, [id, locId]);
-                }
+                await tx.insert(stageLocations).values(
+                    data.locationIds.map(locId => ({
+                        stageId: newId,
+                        locationId: locId
+                    }))
+                );
             }
 
-            await client.query('COMMIT');
-            return this.mapRowToStage(stageRow, salesItems, data.locationIds);
-        } catch (e) {
-            await client.query('ROLLBACK');
-            throw e;
-        } finally {
-            client.release();
-        }
+            return this.mapDrizzleStageToStage(insertedStage, createdSalesItems, data.locationIds || []);
+        });
     }
 
     async update(id: string, data: Partial<Stage>): Promise<Stage | null> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
+         return await this.db.transaction(async (tx) => {
+            const [existing] = await tx.select().from(stages).where(eq(stages.id, id));
+            if (!existing) return null;
 
-            const updates: string[] = [];
-            const values: any[] = [id];
-            let idx = 2;
-
-            if (data.name !== undefined) { updates.push(`name = $${idx++}`); values.push(data.name); }
-            if (data.hasNotes !== undefined) { updates.push(`has_notes = $${idx++}`); values.push(data.hasNotes); }
-            if (data.soundUrl !== undefined) { updates.push(`sound_url = $${idx++}`); values.push(data.soundUrl); }
-            if (data.updatedBy !== undefined) { updates.push(`updated_by = $${idx++}`); values.push(data.updatedBy); }
+            const { createdAt, ...updateData } = data;
             
-            updates.push(`updated_at = NOW()`);
+            const [updatedStage] = await tx.update(stages)
+                .set({
+                    ...updateData,
+                    updatedAt: new Date(),
+                })
+                .where(eq(stages.id, id))
+                .returning();
 
-            const query = `UPDATE stages SET ${updates.join(', ')} WHERE id = $1 RETURNING *`;
-            const res = await client.query(query, values);
-            
-            if (res.rows.length === 0) {
-                await client.query('ROLLBACK');
-                return null;
-            }
-            const stageRow = res.rows[0];
-
-            // Update Sales Items (Simpler to delete all and recreate for now, or sophisticated diff? 
-            // For simplicity in this implementation, we will delete all and recreate if salesItems is provided)
-            let salesItems: SalesItem[] = [];
+            // Handle Sales Items
+            let currentSalesItems: SalesItem[] = [];
             if (data.salesItems !== undefined) {
-                await client.query('DELETE FROM sales_items WHERE stage_id = $1', [id]);
-                for (const item of data.salesItems) {
-                     const itemId = item.id || uuidv4(); // Use existing ID if provided (though type suggests it might be Partial? Check types.)
-                     // The interface says `salesItems?: SalesItem[]` in Stage, which includes ID. 
-                     // But strictly speaking, if we are replacing, we might generate new IDs or keep old ones. 
-                     // Let's assume re-insertion for now.
-                     const itemQuery = `
-                        INSERT INTO sales_items (id, stage_id, name, item_type, price, cost_price, default_quantity, default_panel_category, panel_categories)
-                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                        RETURNING *
-                    `;
-                    const itemValues = [
-                        uuidv4(), id, item.name, item.itemType, item.price, item.costPrice, 
-                        item.defaultQuantity, item.defaultPanelCategory, JSON.stringify(item.panelCategories)
-                    ];
-                     const itemRes = await client.query(itemQuery, itemValues);
-                     salesItems.push(this.mapRowToSalesItem(itemRes.rows[0]));
+                await tx.delete(salesItems).where(eq(salesItems.stageId, id));
+                if (data.salesItems.length > 0) {
+                    const itemsToInsert = data.salesItems.map(item => ({
+                        id: item.id || uuidv4(),
+                        stageId: id,
+                        name: item.name,
+                        itemType: item.itemType,
+                        price: item.price.toString(),
+                        costPrice: item.costPrice?.toString(),
+                        defaultQuantity: item.defaultQuantity,
+                        defaultPanelCategory: item.defaultPanelCategory,
+                        panelCategories: item.panelCategories,
+                    }));
+                    const insertedItems = await tx.insert(salesItems).values(itemsToInsert).returning();
+                    currentSalesItems = insertedItems.map(this.mapDrizzleItemToSalesItem);
                 }
             } else {
-                // Fetch existing
-                const existingItemsRes = await client.query('SELECT * FROM sales_items WHERE stage_id = $1', [id]);
-                salesItems = existingItemsRes.rows.map(row => this.mapRowToSalesItem(row));
+                 const existingItems = await tx.select().from(salesItems).where(eq(salesItems.stageId, id));
+                 currentSalesItems = existingItems.map(this.mapDrizzleItemToSalesItem);
             }
 
-            // Update Locations
-            let locationIds: string[] = [];
+            // Handle Locations
+            let currentLocationIds: string[] = [];
             if (data.locationIds !== undefined) {
-                await client.query('DELETE FROM stage_locations WHERE stage_id = $1', [id]);
-                for (const locId of data.locationIds) {
-                    await client.query('INSERT INTO stage_locations (stage_id, location_id) VALUES ($1, $2)', [id, locId]);
-                }
-                locationIds = data.locationIds;
+                 await tx.delete(stageLocations).where(eq(stageLocations.stageId, id));
+                 if (data.locationIds.length > 0) {
+                     await tx.insert(stageLocations).values(
+                         data.locationIds.map(locId => ({
+                             stageId: id,
+                             locationId: locId
+                         }))
+                     );
+                 }
+                 currentLocationIds = data.locationIds;
             } else {
-                 const existingLocsRes = await client.query('SELECT location_id FROM stage_locations WHERE stage_id = $1', [id]);
-                 locationIds = existingLocsRes.rows.map(r => r.location_id);
+                 const existingLocs = await tx.select().from(stageLocations).where(eq(stageLocations.stageId, id));
+                 currentLocationIds = existingLocs.map(l => l.locationId);
             }
 
-            await client.query('COMMIT');
-            return this.mapRowToStage(stageRow, salesItems, locationIds);
-        } catch (e) {
-            await client.query('ROLLBACK');
-            throw e;
-        } finally {
-            client.release();
-        }
+            return this.mapDrizzleStageToStage(updatedStage, currentSalesItems, currentLocationIds);
+        });
     }
 
     async findById(id: string): Promise<Stage | null> {
-        const query = 'SELECT * FROM stages WHERE id = $1';
-        const res = await this.pool.query(query, [id]);
-        if (res.rows.length === 0) return null;
-        
-        const stageRow = res.rows[0];
+        const [stage] = await this.db.select().from(stages).where(eq(stages.id, id));
+        if (!stage) return null;
 
-        const salesItemsRes = await this.pool.query('SELECT * FROM sales_items WHERE stage_id = $1', [id]);
-        const salesItems = salesItemsRes.rows.map(row => this.mapRowToSalesItem(row));
+        const items = await this.db.select().from(salesItems).where(eq(salesItems.stageId, id));
+        const locs = await this.db.select().from(stageLocations).where(eq(stageLocations.stageId, id));
 
-        const locationsRes = await this.pool.query('SELECT location_id FROM stage_locations WHERE stage_id = $1', [id]);
-        const locationIds = locationsRes.rows.map(row => row.location_id);
-
-        return this.mapRowToStage(stageRow, salesItems, locationIds);
+        return this.mapDrizzleStageToStage(
+            stage, 
+            items.map(this.mapDrizzleItemToSalesItem),
+            locs.map(l => l.locationId)
+        );
     }
 
     async findAllByFlowId(flowId: string): Promise<Stage[]> {
-        const query = 'SELECT * FROM stages WHERE flow_id = $1 ORDER BY created_at ASC'; // Ordering by creation? Or add sequence?
-        const res = await this.pool.query(query, [flowId]);
+        const stageRows = await this.db.select().from(stages).where(eq(stages.flowId, flowId)); // ordering could be added
         
-        const stages: Stage[] = [];
-        for (const row of res.rows) {
-            const salesItemsRes = await this.pool.query('SELECT * FROM sales_items WHERE stage_id = $1', [row.id]);
-            const salesItems = salesItemsRes.rows.map(r => this.mapRowToSalesItem(r));
-
-            const locationsRes = await this.pool.query('SELECT location_id FROM stage_locations WHERE stage_id = $1', [row.id]);
-            const locationIds = locationsRes.rows.map(r => r.location_id);
-            
-            stages.push(this.mapRowToStage(row, salesItems, locationIds));
+        const results: Stage[] = [];
+        for (const row of stageRows) {
+             const items = await this.db.select().from(salesItems).where(eq(salesItems.stageId, row.id));
+             const locs = await this.db.select().from(stageLocations).where(eq(stageLocations.stageId, row.id));
+             
+             results.push(this.mapDrizzleStageToStage(
+                 row,
+                 items.map(this.mapDrizzleItemToSalesItem),
+                 locs.map(l => l.locationId)
+             ));
         }
-        return stages;
+        return results;
     }
 
     async delete(id: string): Promise<boolean> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-            // Delete children first (cascading usually handles this, but explicit is safer without foreign keys setup knowledge)
-            await client.query('DELETE FROM sales_items WHERE stage_id = $1', [id]);
-            await client.query('DELETE FROM stage_locations WHERE stage_id = $1', [id]);
-            const res = await client.query('DELETE FROM stages WHERE id = $1', [id]);
-            await client.query('COMMIT');
-            return (res.rowCount || 0) > 0;
-        } catch (e) {
-            await client.query('ROLLBACK');
-            throw e;
-        } finally {
-            client.release();
-        }
+        const result = await this.db.delete(stages).where(eq(stages.id, id)).returning();
+        return result.length > 0;
     }
 }
+
+

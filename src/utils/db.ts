@@ -35,7 +35,7 @@ export const getDbPool = async () => {
         // Local Mode
         console.log('Connecting to Local DB via DATABASE_URL');
         pool = new Pool({
-            connectionString: process.env.DATABASE_URL || 'postgresql://postgres:postgres@localhost:5432/kiliniks'
+            connectionString: process.env.DATABASE_URL || 'postgresql://postgres:password@localhost:5432/kiliniks'
         });
     }
     return pool;

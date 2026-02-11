@@ -1,87 +1,80 @@
 import { Pool } from 'pg';
 import { Flow, FlowRepository, PaginatedResult, PaginationParams } from '../../core/types';
+import { getDb } from './database';
+import { flows } from './schema';
+import { eq, sql } from 'drizzle-orm';
 import { v4 as uuidv4 } from 'uuid';
+import { NodePgDatabase } from 'drizzle-orm/node-postgres';
+import * as schema from './schema';
 
 export class PostgresFlowRepository implements FlowRepository {
-    constructor(private pool: Pool) {}
+    private db: NodePgDatabase<typeof schema>;
 
-    private mapRowToFlow(row: any): Flow {
+    constructor(pool?: Pool) {
+        this.db = getDb(pool);
+    }
+
+    private mapDrizzleToFlow(row: typeof flows.$inferSelect): Flow {
         return {
             id: row.id,
             name: row.name,
-            createdBy: row.created_by,
-            updatedBy: row.updated_by,
-            createdAt: new Date(row.created_at).toISOString(),
+            createdBy: row.createdBy,
+            updatedBy: row.updatedBy ?? undefined,
+            createdAt: row.createdAt.toISOString(),
         };
     }
 
     async create(data: Omit<Flow, 'id' | 'createdAt'>): Promise<Flow> {
         const id = uuidv4();
-        const query = `
-            INSERT INTO flows (id, name, created_by, updated_by)
-            VALUES ($1, $2, $3, $4)
-            RETURNING *
-        `;
-        const values = [id, data.name, data.createdBy, data.updatedBy];
-        const res = await this.pool.query(query, values);
-        return this.mapRowToFlow(res.rows[0]);
+        const [inserted] = await this.db.insert(flows).values({
+            id,
+            name: data.name,
+            createdBy: data.createdBy,
+            updatedBy: data.updatedBy,
+        }).returning();
+        
+        return this.mapDrizzleToFlow(inserted);
     }
 
     async update(id: string, data: Partial<Flow>): Promise<Flow | null> {
-        const updates: string[] = [];
-        const values: any[] = [id];
-        let idx = 2;
-
-        if (data.name !== undefined) {
-            updates.push(`name = $${idx++}`);
-            values.push(data.name);
-        }
-        if (data.updatedBy !== undefined) {
-            updates.push(`updated_by = $${idx++}`);
-            values.push(data.updatedBy);
-        }
-
-        updates.push(`updated_at = NOW()`);
-
-        if (updates.length <= 1) { // Only updated_at
-             // If nothing to update, just return existing? Or proceed to update timestamp? 
-             // Let's proceed to update timestamp.
-        }
-
-        const query = `UPDATE flows SET ${updates.join(', ')} WHERE id = $1 RETURNING *`;
-        const res = await this.pool.query(query, values);
+        const updateData: any = {};
+        if (data.name !== undefined) updateData.name = data.name;
+        if (data.updatedBy !== undefined) updateData.updatedBy = data.updatedBy;
         
-        if (res.rows.length === 0) return null;
-        return this.mapRowToFlow(res.rows[0]);
+        updateData.updatedAt = new Date();
+
+        const [updated] = await this.db.update(flows)
+            .set(updateData)
+            .where(eq(flows.id, id))
+            .returning();
+        
+        if (!updated) return null;
+        return this.mapDrizzleToFlow(updated);
     }
 
     async findById(id: string): Promise<Flow | null> {
-        const query = 'SELECT * FROM flows WHERE id = $1';
-        const res = await this.pool.query(query, [id]);
-        if (res.rows.length === 0) return null;
-        return this.mapRowToFlow(res.rows[0]);
+        const [result] = await this.db.select().from(flows).where(eq(flows.id, id));
+        if (!result) return null;
+        return this.mapDrizzleToFlow(result);
     }
 
     async findAll(params?: PaginationParams): Promise<PaginatedResult<Flow>> {
         const limit = params?.limit || 10;
         const offset = params?.offset || 0;
 
-        const countQuery = 'SELECT COUNT(*) FROM flows';
-        const countRes = await this.pool.query(countQuery);
-        const total = parseInt(countRes.rows[0].count, 10);
+        const [{ count }] = await this.db.select({ count: sql<number>`count(*)` }).from(flows);
+        const total = Number(count);
 
-        const query = 'SELECT * FROM flows LIMIT $1 OFFSET $2';
-        const res = await this.pool.query(query, [limit, offset]);
+        const results = await this.db.select().from(flows).limit(limit).offset(offset);
         
         return {
-            data: res.rows.map(row => this.mapRowToFlow(row)),
+            data: results.map(this.mapDrizzleToFlow),
             total
         };
     }
 
     async delete(id: string): Promise<boolean> {
-        const query = 'DELETE FROM flows WHERE id = $1';
-        const res = await this.pool.query(query, [id]);
-        return (res.rowCount || 0) > 0;
+        const result = await this.db.delete(flows).where(eq(flows.id, id)).returning();
+        return result.length > 0;
     }
 }
