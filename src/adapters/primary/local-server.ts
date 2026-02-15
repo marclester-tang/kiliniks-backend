@@ -11,11 +11,13 @@ import swaggerUi from 'swagger-ui-express';
 import { swaggerSpec } from './swagger';
 import * as dotenv from 'dotenv';
 import { authMiddleware } from './auth-middleware';
+import cors from 'cors';
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
+app.use(cors());
 
 const port = process.env.PORT || 3000;
 
@@ -159,11 +161,11 @@ const startServer = async () => {
      *         createdAt:
      *           type: string
      *           format: date-time
-     *      securitySchemes:
-     *        BearerAuth:
-     *          type: http
-     *          scheme: bearer
-     *          bearerFormat: JWT
+     *   securitySchemes:
+     *     BearerAuth:
+     *       type: http
+     *       scheme: bearer
+     *       bearerFormat: JWT
      * security:
      *   - BearerAuth: []
      */

@@ -102,4 +102,7 @@ We will use a modular structure to separate Lambda handlers from business logic.
     - Call API Gateway endpoint.
     - Check CloudWatch logs for Email Worker processing.
 
+## Bootstrap
+`npx cdk bootstrap --profile kiliniks`
+
 `npx cdk deploy --all --context clinic=demo --profile kiliniks`

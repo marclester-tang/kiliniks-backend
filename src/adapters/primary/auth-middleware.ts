@@ -23,7 +23,7 @@ const getVerifier = () => {
 
         verifier = CognitoJwtVerifier.create({
             userPoolId: process.env.COGNITO_USER_POOL_ID,
-            tokenUse: "id", // or "access"
+            tokenUse: "access", // or "access"
             clientId: process.env.COGNITO_CLIENT_ID,
         });
     }
@@ -59,7 +59,7 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
         req.user = payload;
         
         // Log the user for debugging
-        // console.log('User authenticated:', payload.sub);
+        console.log('User authenticated:', payload.sub);
         
         next();
     } catch (err) {

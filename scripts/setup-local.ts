@@ -3,7 +3,7 @@ import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
-const STACK_NAME = process.env.STACK_NAME || 'KiliniksBackendStack-Staging';
+const STACK_NAME = process.env.STACK_NAME || 'KiliniksBackendStack-demo-Staging';
 const PROFILE = process.env.AWS_PROFILE || 'kiliniks';
 
 const runCommand = (command: string) => {

@@ -17,11 +17,11 @@ export class KiliniksBackendStack extends cdk.Stack {
 
     const networking = new Networking(this, 'Networking', { stage: props.stage });
     
-    const database = new Database(this, 'Database', { 
-        vpc: networking.vpc, 
-        stage: props.stage,
-        clinicName: props.clinicName
-    });
+    // const database = new Database(this, 'Database', { 
+    //     vpc: networking.vpc, 
+    //     stage: props.stage,
+    //     clinicName: props.clinicName
+    // });
 
     const auth = new Auth(this, 'Auth', { stage: props.stage, clinicName: props.clinicName });
 
@@ -35,8 +35,8 @@ export class KiliniksBackendStack extends cdk.Stack {
         vpc: networking.vpc,
         environment: {
             EVENT_BUS_NAME: events.bus.eventBusName,
-            DB_SECRET_ARN: database.cluster.secret?.secretArn || '',
-            DB_CLUSTER_ARN: database.cluster.clusterArn, 
+            // DB_SECRET_ARN: database.cluster.secret?.secretArn || '',
+            // DB_CLUSTER_ARN: database.cluster.clusterArn,  
             DB_NAME: 'kiliniks',
         },
         bundling: {
@@ -45,8 +45,8 @@ export class KiliniksBackendStack extends cdk.Stack {
     });
 
     // Grant permissions
-    database.cluster.secret?.grantRead(apiHandler);
-    database.cluster.connections.allowFrom(apiHandler, cdk.aws_ec2.Port.tcp(5432));
+    // database.cluster.secret?.grantRead(apiHandler);
+    // database.cluster.connections.allowFrom(apiHandler, cdk.aws_ec2.Port.tcp(5432));
     events.bus.grantPutEventsTo(apiHandler);
 
     // API Gateway
